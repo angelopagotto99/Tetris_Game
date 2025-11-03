@@ -1,4 +1,4 @@
-# Programming and Laboratory Project, A.Y. 2024/2025
+# Programming and Laboratory Project
 
 This project involves implementing a simplified version of the classic game [Tetris](https://www.lumpty.com/amusements/games/tetris/tetris.html), focusing on the fundamental operations of (1) parsing pieces recursively from an input stream, and (2) inserting those pieces in the Tetris grid.
 
