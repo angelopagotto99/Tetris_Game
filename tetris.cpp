@@ -5,7 +5,6 @@
  * CLASSE PIECE
  */
 
-//costruttori+distruttore
 piece::piece(): m_side(0), m_color(0), m_grid(nullptr) {
 }
 
@@ -13,7 +12,7 @@ piece::piece(uint32_t s, uint8_t c):m_side(0), m_color(0), m_grid(nullptr){
     if(s == 0 || (s & (s-1)) != 0) {
         throw tetris_exception("Side deve essere una potenza di 2 > 0");
     }
-    if(c == 0 || c > 255) {
+    if(c == 0) {
         throw tetris_exception("Colore deve essere tra 1 e 255");
     }
     m_side=s;
@@ -73,8 +72,6 @@ piece::~piece() {
     m_grid= nullptr;
 }
 
-//controllo stato griglia
-
 bool piece::empty(uint32_t i, uint32_t j, uint32_t s) const {
     if(s==0) return true;
     if (i + s > m_side || j + s > m_side) {
@@ -125,26 +122,22 @@ bool piece::full() const {
 
 
 void piece::rotate() {
-    // 1. Crea nuova griglia per il risultato
     bool** rotated_grid = new bool*[m_side];
     for(uint32_t i = 0; i < m_side; i++) {
         rotated_grid[i] = new bool[m_side];
     }
 
-    // 2. Esegui rotazione 90° clockwise
     for(uint32_t i = 0; i < m_side; i++) {
         for(uint32_t j = 0; j < m_side; j++) {
             rotated_grid[j][m_side - 1 - i] = m_grid[i][j];
         }
     }
 
-    // 3. Dealloca la vecchia griglia
     for(uint32_t i = 0; i < m_side; i++) {
         delete[] m_grid[i];
     }
     delete[] m_grid;
 
-    // 4. Sostituisci con la nuova griglia
     m_grid = rotated_grid;
 }
 
@@ -153,24 +146,22 @@ void piece::cut_row(uint32_t i) {
         throw tetris_exception("Indice fuori range in cut_row()");
     }
 
-    // Sposta tutte le righe SOTTO la riga i verso l'ALTO
-    for(uint32_t r = i; r < m_side - 1; ++r) {
-        for(uint32_t c = 0; c < m_side; ++c) {
-            m_grid[r][c] = m_grid[r+1][c];  // Copia dalla riga SOTTO
+    for(uint32_t r = i; r < m_side - 1; r++) {
+        for(uint32_t c = 0; c < m_side; c++) {
+            m_grid[r][c] = m_grid[r+1][c];
         }
     }
 
-    // Aggiungi riga VUOTA in FONDO
-    for(uint32_t j = 0; j < m_side; ++j) {
-        m_grid[m_side-1][j] = false;
+    for(uint32_t j = 0; j < m_side; j++) {
+        m_grid[m_side - 1][j] = false;
     }
 }
 
 //operatori di assegnamento
 
 piece& piece::operator=(const piece &rhs) {
-    if (this != &rhs) { // Evita l'auto-assegnazione (piece = piece)
-          if (this->m_grid) {
+    if (this != &rhs) {
+        if (this->m_grid) {
             for (uint32_t i = 0; i < this->m_side; ++i) {
                 delete[] this->m_grid[i];
             }
@@ -215,8 +206,6 @@ piece& piece::operator=(piece &&rhs) {
     }
     return *this;
 }
-
-//Funzioni di accesso e modifica
 
 uint32_t piece::side() const {
     return m_side;
@@ -270,7 +259,6 @@ bool piece::operator==(const piece &rhs) const {
         }
         return true;
     }
-    return true;
 }
 bool piece::operator!=(const piece &rhs) const {
     return !(*this==rhs);
@@ -289,107 +277,113 @@ bool piece::operator!=(const piece &rhs) const {
 void C(std::istream &is, piece& p, uint32_t start, uint32_t end, uint32_t len) {
     char c;
     is >> std::ws;
-    if (!(is.get(c))) {
+    if (!is.get(c)) {
         throw tetris_exception("Errore nel parsing");
     }
-    if(c=='['){
+
+    if(c == '['){
         is >> std::ws;
         char close;
-        if (!(is.get(close)) || close != ']') {
-            throw tetris_exception("Quadrante vuoto errato: serve ']'");
+        if (!is.get(close) || close != ']') {
+            throw tetris_exception("Quadrante vuoto errato: serve ']' dopo '['");
         }
-        for(uint32_t i=0; i<len;i++){
-            for(uint32_t j=0;j<len;j++){
-                p(start+i,end+j)=false;
+        for(uint32_t i = 0; i < len; i++) {
+            for(uint32_t j = 0; j < len; j++) {
+                p(start + i, end + j) = false;
             }
         }
-    }else if(c=='('){
+    } else if(c == '(') {
         is >> std::ws;
-        char next=is.peek();
-        if(next==')'){
-            is.get();//consumo la )
-            for(uint32_t i=0; i<len;i++){
-                for(uint32_t j=0;j<len;j++){
-                    p(start+i,end+j)=true;
+        char next = is.peek();
+
+        if(next == ')') {
+            is.get();
+            for(uint32_t i = 0; i < len; i++) {
+                for(uint32_t j = 0; j < len; j++) {
+                    p(start + i, end + j) = true;
                 }
             }
-        }else if(next=='['||next=='(') {
-            C(is, p, start, end, len / 2);//TL
-            C(is, p, start, end + (len / 2), len / 2);//TR
-            C(is, p, start + (len / 2), end, len / 2);//BL
-            C(is, p, start + (len / 2), end + (len / 2), len / 2);//BR
+        } else if(next == '[' || next == '(') {
+            C(is, p, start, end, len / 2); // TL
+            C(is, p, start, end + (len / 2), len / 2); // TR
+            C(is, p, start + (len / 2), end, len / 2); // BL
+            C(is, p, start + (len / 2), end + (len / 2), len / 2); // BR
             is >> std::ws;
             char end_c;
-            if (!(is.get(end_c)) || end_c != ')') {
-                throw tetris_exception("Parentesti miste sbagliate");
+            if (!is.get(end_c) || end_c != ')') {
+                throw tetris_exception("Parentesi di chiusura ')' mancante");
             }
+        } else {
+            // Carattere inatteso dopo '('
+            throw tetris_exception(std::string("Carattere inatteso '") + next + "' dopo '('");
         }
-    } else{
-        throw tetris_exception("carattere inatteso: richiesto '[' o '('");
+    } else {
+        throw tetris_exception(std::string("Carattere inatteso '") + c + "', atteso '[' o '('");
     }
 }
-//stampo il pezzo
 void D(std::ostream& os, piece const& p, uint32_t start, uint32_t end, uint32_t len){
-    if (len==0) return;
-    if(p.empty(start,end,len)) os<<"[]";
-    else if(p.full(start,end,len)) os<<"()";
-    else{
-        os<<'(';
-        uint32_t half_len = len/2;
-        D(os, p, start, end, half_len);// TL
-        D(os, p, start, end + half_len, half_len);// TR
-        D(os, p, start + half_len, end, half_len); // BL
-        D(os, p, start + half_len, end + half_len, half_len); //BR
+    if (len == 0) return;
+
+    if (len == 1) {
+        if (p(start, end))
+            os << "()";
+        else
+            os << "[]";
+        return;
+    }
+    bool is_empty = p.empty(start, end, len);
+    bool is_full = p.full(start, end, len);
+
+    if (is_empty) {
+        os << "[]";
+    } else if (is_full) {
+        os << "()";
+    } else {
+        os << '(';
+        uint32_t half_len = len / 2;
+        D(os, p, start, end, half_len);
+        D(os, p, start, end + half_len, half_len);
+        D(os, p, start + half_len, end, half_len);
+        D(os, p, start + half_len, end + half_len, half_len);
         os << ')';
     }
 }
-
 std::istream& operator>>(std::istream& is, piece& p) {
     uint32_t side;
     int color;
-
-    // Leggi side
     if (!(is >> side)) {
         throw tetris_exception("Errore lettura dimensione side");
     }
 
-    // Verifica che side sia una potenza di 2
     if (side == 0 || (side & (side - 1)) != 0) {
         throw tetris_exception("Dimensione side non è una potenza di 2");
     }
 
-    // Leggi color
     if (!(is >> color)) {
         throw tetris_exception("Errore lettura colore");
     }
-
-    if (color < 1 || color > 255) {
-        throw tetris_exception("Colore non valido (deve essere tra 1 e 255)");
-    }
-
-    // Consuma spazi bianchi prima della struttura ricorsiva
     is >> std::ws;
 
-    // Verifica che il primo carattere sia '('
+    if (is.peek() == EOF) {
+        throw tetris_exception("Struttura pezzo mancante dopo side e colore");
+    }
+
     char first_char;
     if (!is.get(first_char)) {
-        throw tetris_exception("Errore lettura struttura pezzo");
+        throw tetris_exception("Errore lettura primo carattere struttura");
     }
 
     if (first_char != '(') {
-        throw tetris_exception("Struttura pezzo malformata: atteso '('");
+        throw tetris_exception(std::string("Struttura pezzo malformata: atteso '(', trovato '") + first_char + "'");
     }
 
-    // Riporta il carattere '(' nello stream per la funzione ricorsiva
     is.putback(first_char);
 
-    // Crea pezzo temporaneo e parsifica
     piece temp_p(side, static_cast<uint8_t>(color));
     C(is, temp_p, 0, 0, temp_p.side());
 
-    // Verifica che non ci siano errori nello stream
     if (is.fail()) {
-        throw tetris_exception("Errore durante il parsing della struttura");
+        throw tetris_exception("Errore durante il parsing della struttura del pezzo");
     }
 
     p = std::move(temp_p);
@@ -407,7 +401,7 @@ std::ostream& operator<<(std::ostream& os, piece const& p){
  * CLASSE TETRIS
  */
 
-tetris::tetris(): m_score(0), m_height(0), m_width(0), m_field(nullptr){
+tetris::tetris(): m_score(0), m_width(0),m_height(0), m_field(nullptr){
 
 }
 
@@ -550,10 +544,13 @@ void tetris::add(const piece& p, int x, int y) {
 void tetris::insert(const piece& p, int x) {
     int y = m_height - 1;
     bool found_position = false;
+    int found_pos=-1;
 
-    while (y >= 0 and !found_position) {
+    while (y >= 0) {
         if (containment(p, x, y)) {
             found_position = true;
+            found_pos=y;
+            break;
         }
         y--;
     }
@@ -561,7 +558,7 @@ void tetris::insert(const piece& p, int x) {
         throw tetris_exception("GAME OVER");
     }
 
-    add(p, x, y);
+    add(p, x, found_pos);
 
     bool changed;
     do {
@@ -589,7 +586,6 @@ void tetris::insert(const piece& p, int x) {
                         }
                     }
                 }
-
                 if (!occupied) {
                     row_complete = false;
                     break;
@@ -633,7 +629,6 @@ void tetris::insert(const piece& p, int x) {
                 current = &((*current)->next);
             }
         }
-
     } while (changed);
 }
 
@@ -646,32 +641,19 @@ bool tetris::containment(const piece& p, int x, int y) const {
             if (p(i, j)) {
                 int field_x = x + static_cast<int>(j);
                 int field_y = y + static_cast<int>(i);
-
-                std::cout << "DEBUG: cella piena (" << i << "," << j << ") -> campo ("
-                          << field_x << "," << field_y << ")" << std::endl;
-
-                // CONTROLLA TUTTI I BORDI
                 if (field_x < 0 || field_x >= static_cast<int>(m_width) ||
                     field_y < 0 || field_y >= static_cast<int>(m_height)) {
-                    std::cout << "DEBUG: FUORI BORDO" << std::endl;
                     return false;
                 }
             }
         }
     }
-
-    std::cout << "DEBUG: Controllo bordi SUPERATO" << std::endl;
-
-    // 2. Controllo collisioni con altri pezzi
     if (!m_field) {
-        std::cout << "DEBUG: Nessun altro pezzo - containment OK" << std::endl;
         return true;
     }
 
-    std::cout << "DEBUG: Controllo collisioni con " << std::endl;
     int piece_count = 0;
     for (const_iterator it = begin(); it != end(); ++it) {
-        std::cout << "DEBUG: Pezzo " << piece_count << " at (" << it->x << "," << it->y << ")" << std::endl;
         piece_count++;
 
         const tetris_piece& existing = *it;
@@ -682,8 +664,6 @@ bool tetris::containment(const piece& p, int x, int y) const {
 
                 int new_x = x + static_cast<int>(j);
                 int new_y = y + static_cast<int>(i);
-
-                // Se la cella è sopra il campo, non può collidere
                 if (new_y >= static_cast<int>(m_height)) continue;
 
                 for (uint32_t ei = 0; ei < existing.p.side(); ei++) {
@@ -694,7 +674,6 @@ bool tetris::containment(const piece& p, int x, int y) const {
                         int existing_y = existing.y + static_cast<int>(ei);
 
                         if (new_x == existing_x && new_y == existing_y) {
-                            std::cout << "DEBUG: COLLISIONE a (" << new_x << "," << new_y << ")" << std::endl;
                             return false;
                         }
                     }
@@ -702,8 +681,6 @@ bool tetris::containment(const piece& p, int x, int y) const {
             }
         }
     }
-
-    std::cout << "DEBUG: Controllo collisioni SUPERATO" << std::endl;
     return true;
 }
 
@@ -785,7 +762,6 @@ bool tetris::const_iterator::operator!=(const tetris::const_iterator &rhs) const
     return m_ptr!=rhs.m_ptr;
 }
 
-
 tetris::const_iterator tetris::begin() const {
     return const_iterator(m_field);
 }
@@ -845,7 +821,6 @@ void tetris::print_ascii_art(std::ostream& os) const {
     }
     os << "|" << std::endl;
 }
-
 std::ostream& operator<<(std::ostream& os, tetris const& t){
     os << t.score() << ' ' << t.width() << ' ' << t.height() <<"\n";
     tetris::const_iterator it=t.begin();
@@ -856,45 +831,35 @@ std::ostream& operator<<(std::ostream& os, tetris const& t){
 }
 std::istream& operator>>(std::istream& is, tetris& t) {
     uint32_t score, width, height;
+
     if (!(is >> score >> width >> height)) {
         throw tetris_exception("Errore lettura score/width/height");
     }
-
-    // Crea tetris temporaneo
     tetris temp(width, height, score);
-
     is >> std::ws;
+    while (is.peek() != EOF && !is.fail()) {
+        std::streampos current_pos = is.tellg();
 
-    // Leggi pezzi fino alla fine del file
-    while (is.peek() != EOF) {
         try {
             piece p;
             int x, y;
-
-            // Prova a leggere un pezzo
             if (!(is >> p)) {
-                // Se non riesce a leggere un pezzo completo, esci
-                if (is.eof()) break;
-                throw tetris_exception("Errore lettura pezzo");
+                break;
             }
 
-            // Leggi coordinate
             if (!(is >> x >> y)) {
-                throw tetris_exception("Errore lettura coordinate");
+                throw tetris_exception("Errore lettura coordinate dopo pezzo");
             }
-
-            // Aggiungi il pezzo
             temp.add(p, x, y);
 
         } catch (const tetris_exception& e) {
-            // Se c'è un errore nel parsing di un pezzo, esci
+            is.clear();
+            is.seekg(current_pos);
             break;
         }
 
-        is >> std::ws; // Salta spazi
+        is >> std::ws;
     }
-
-    // Se siamo qui, il parsing è riuscito
     t = std::move(temp);
     return is;
 }
