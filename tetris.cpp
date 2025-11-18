@@ -869,15 +869,24 @@ std::istream& operator>>(std::istream& is, tetris& t) {
         throw tetris_exception("Errore lettura score/width/height");
     }
 
-    if (width == 0 || height == 0) {
-        throw tetris_exception("Dimensioni tetris non valide");
-    }
-
+    // Crea tetris temporaneo
     tetris temp(width, height, score);
     is >> std::ws;
 
-    while (is.peek() != EOF && !is.fail()) {
+    // Usiamo una pila (stack) di pezzi usando solo l'interfaccia pubblica
+    // Memorizziamo i pezzi in ordine inverso, poi li aggiungiamo in testa
+    struct PieceInfo {
+        piece p;
+        int x;
+        int y;
+        PieceInfo* next;
+    };
+
+    PieceInfo* stack = nullptr;
+
+    while (is.peek() != EOF) {
         std::streampos current_pos = is.tellg();
+
         try {
             piece p;
             int x, y;
@@ -888,10 +897,12 @@ std::istream& operator>>(std::istream& is, tetris& t) {
 
             is >> std::ws;
             if (!(is >> x >> y)) {
-                throw tetris_exception("Errore lettura coordinate dopo pezzo");
+                throw tetris_exception("Errore lettura coordinate");
             }
 
-            temp.add(p, x, y);
+            // Push sullo stack (ordine inverso)
+            PieceInfo* new_node = new PieceInfo{p, x, y, stack};
+            stack = new_node;
 
         } catch (const tetris_exception& e) {
             is.clear();
@@ -900,6 +911,15 @@ std::istream& operator>>(std::istream& is, tetris& t) {
         }
 
         is >> std::ws;
+    }
+
+    // Ora pop dallo stack e aggiungi in testa (ordine corretto)
+    PieceInfo* current = stack;
+    while (current) {
+        temp.add(current->p, current->x, current->y);
+        PieceInfo* next = current->next;
+        delete current;
+        current = next;
     }
 
     t = std::move(temp);
@@ -989,6 +1009,84 @@ void test_piece_rotate() {
     assert(p(1,1) == false);
 
     std::cout << "Rotazione: OK" << std::endl;
+}
+void debug_insert_game_over() {
+    std::cout << "=== DEBUG insert GAME OVER ===" << std::endl;
+
+    tetris game(6, 8);
+    piece p(2, 100);
+    p(0,0) = true; p(0,1) = true;
+    p(1,0) = true; p(1,1) = true;
+
+    std::cout << "Tetris field: " << game.width() << "x" << game.height() << std::endl;
+    std::cout << "Piece side: " << p.side() << std::endl;
+
+    try {
+        std::cout << "Provando insert at x=2..." << std::endl;
+        game.insert(p, 2);
+        std::cout << "✓ Insert riuscito!" << std::endl;
+        std::cout << "Score dopo insert: " << game.score() << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ GAME OVER: " << e.what() << std::endl;
+
+        // Debug dettagliato: perché containment fallisce?
+        std::cout << "\nTesting containment in tutte le posizioni y:" << std::endl;
+        bool found_valid = false;
+        for (int y = 7; y >= -1; y--) {
+            bool cont = game.containment(p, 2, y);
+            std::cout << "  containment(" << 2 << "," << y << "): " << (cont ? "VALIDO" : "NON VALIDO");
+            if (cont) {
+                std::cout << "  ← ✓ POSIZIONE VALIDA!";
+                found_valid = true;
+            }
+            std::cout << std::endl;
+        }
+
+        if (!found_valid) {
+            std::cout << "❌ NESSUNA posizione y valida trovata!" << std::endl;
+            std::cout << "Possibili problemi:" << std::endl;
+            std::cout << "1. containment() restituisce sempre false" << std::endl;
+            std::cout << "2. I bordi non sono gestiti correttamente" << std::endl;
+            std::cout << "3. Il campo è considerato sempre occupato" << std::endl;
+        }
+    }
+}
+
+void test_parser_debug() {
+    std::cout << "=== DEBUG operator>> tetris ===" << std::endl;
+
+    // Test caso semplice che dovrebbe funzionare
+    std::stringstream ss1("0 10 20\n2 100 () 5 6");
+    tetris t1;
+    try {
+        ss1 >> t1;
+        std::cout << "✓ Caso semplice: OK" << std::endl;
+        std::cout << "  Score: " << t1.score() << ", Size: " << t1.width() << "x" << t1.height() << std::endl;
+
+        int count = 0;
+        for (auto it = t1.begin(); it != t1.end(); ++it) count++;
+        std::cout << "  Pezzi caricati: " << count << std::endl;
+
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Caso semplice FALLITO: " << e.what() << std::endl;
+    }
+
+    // Test con più pezzi
+    std::stringstream ss2("0 8 6\n2 100 () 1 2\n2 200 () 3 4");
+    tetris t2;
+    try {
+        ss2 >> t2;
+        std::cout << "✓ Multipli pezzi: OK" << std::endl;
+
+        int count = 0;
+        for (auto it = t2.begin(); it != t2.end(); ++it) {
+            std::cout << "  Pezzo " << count << " at (" << it->x << "," << it->y << ")" << std::endl;
+            count++;
+        }
+
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Multipli pezzi FALLITO: " << e.what() << std::endl;
+    }
 }
 
 void test_parser_errors() {
@@ -1468,6 +1566,9 @@ int main() {
         // TEST PIECE (già verificati)
         //test_power_of_two_validation();
         //test_memory_safety_with_exceptions();
+        test_parser_debug();
+        debug_insert_game_over();
+        /*
         test_cut_row_specific();
         test_parser_errors();
         test_cut_row_manual();
@@ -1495,7 +1596,7 @@ int main() {
         std::cout << "\n🎉 🎉 🎉 TUTTI I TEST SUPERATI! PROGETTO PRONTO! 🎉 🎉 🎉" << std::endl;
         std::cout << "Tutte le funzionalità di Piece e Tetris funzionano correttamente." << std::endl;
         std::cout << "Zero memory leak rilevati da Valgrind." << std::endl;
-
+        */
     } catch (const std::exception& e) {
         std::cerr << "❌ ERRORE: " << e.what() << std::endl;
         return 1;
