@@ -14,7 +14,6 @@ piece::piece(uint32_t s, uint8_t c):m_side(0), m_color(0), m_grid(nullptr){
     }
     m_side=s;
     m_color=c;
-    m_grid=nullptr;
     if(c == 0) {
         throw tetris_exception("Colore deve essere tra 1 e 255");
     }
@@ -143,7 +142,7 @@ void piece::rotate() {
 
 void piece::cut_row(uint32_t i) {
     if (i >= m_side) {
-        throw tetris_exception("Indice fuori range in cut_row()");
+        throw tetris_exception("Indice fuori range in cut_row()>=side");
     }
 
     for(uint32_t r = i; r >0; r--) {
@@ -466,8 +465,6 @@ tetris::tetris(const tetris &rhs): m_score(rhs.m_score), m_width(rhs.m_width), m
 }
 tetris::tetris(tetris &&rhs): m_score(rhs.m_score), m_width(rhs.m_width), m_height(rhs.m_height), m_field(rhs.m_field) {
     rhs.m_score = 0;
-    rhs.m_width = 0;
-    rhs.m_height = 0;
     rhs.m_field = nullptr;
 }
 
@@ -503,8 +500,6 @@ tetris &tetris::operator=(tetris &&rhs) {
         m_height = rhs.m_height;
         m_field = rhs.m_field;
         rhs.m_score = 0;
-        rhs.m_width = 0;
-        rhs.m_height = 0;
         rhs.m_field = nullptr;
     }
     return *this;
@@ -571,6 +566,7 @@ bool tetris::operator==(const tetris& rhs) const {
 
 
 void tetris::add(const piece& p, int x, int y) {
+    if (p.empty()) return;
     if (!containment(p, x, y)) {
         throw tetris_exception{"Il pezzo non può essere inserito"};
     }
@@ -589,6 +585,7 @@ void tetris::insert(const piece& p, int x) {
     for (int y = start_y; y >= end_y; y--) {
         if (containment(p, x, y)) {
             found_y = y;
+            break;
         }
     }
 
@@ -602,33 +599,42 @@ void tetris::insert(const piece& p, int x) {
     do {
         changed = false;
 
-        for (int row = static_cast<int>(m_height) - 1; row >= 0; row--) {
-            bool row_complete = true;
+        // a) Cerca righe complete DAL BASSO VERSO L'ALTO
+        for (int row = static_cast<int>(m_height) - 1; row >= 0; --row) {
+            bool row_full = true;
 
-            for (uint32_t col = 0; col < m_width && row_complete; col++) {
-                bool occupied = false;
+            // Controlla ogni colonna
+            for (uint32_t col = 0; col < m_width && row_full; ++col) {
+                bool cell_occupied = false;
 
-                for (iterator it = begin(); it != end() && !occupied; ++it) {
+                // Controlla tutti i pezzi
+                for (iterator it = begin(); it != end() && !cell_occupied; ++it) {
                     const tetris_piece& tp = *it;
-                    int piece_row = row - tp.y;
-                    int piece_col = col - tp.x;
 
-                    if (piece_row >= 0 && piece_row < static_cast<int>(tp.p.side()) &&
-                        piece_col >= 0 && piece_col < static_cast<int>(tp.p.side()) &&
-                        tp.p(piece_row, piece_col)) {
-                        occupied = true;
+                    // Coordinate relative nel pezzo
+                    int rel_row = row - tp.y;
+                    int rel_col = col - tp.x;
+
+                    if (rel_row >= 0 && rel_row < static_cast<int>(tp.p.side()) &&
+                        rel_col >= 0 && rel_col < static_cast<int>(tp.p.side()) &&
+                        tp.p(rel_row, rel_col)) {
+                        cell_occupied = true;
                     }
                 }
 
-                if (!occupied) {
-                    row_complete = false;
+                if (!cell_occupied) {
+                    row_full = false;
                 }
             }
 
-            if (row_complete) {
+            // b) Se la riga è completa, tagliala
+            if (row_full) {
+                // Taglia la riga da tutti i pezzi
                 for (iterator it = begin(); it != end(); ++it) {
                     tetris_piece& tp = *it;
-                    if (tp.y <= row && tp.y + static_cast<int>(tp.p.side()) > row) {
+
+                    // Se il pezzo interseca questa riga
+                    if (tp.y <= row && row < tp.y + static_cast<int>(tp.p.side())) {
                         uint32_t piece_row = row - tp.y;
                         tp.p.cut_row(piece_row);
                     }
@@ -636,23 +642,24 @@ void tetris::insert(const piece& p, int x) {
 
                 m_score += m_width;
                 changed = true;
-                break;
+
+                // c) Dopo aver tagliato, tutti i pezzi SOPRA questa riga scendono di 1
+                for (iterator it = begin(); it != end(); ++it) {
+                    tetris_piece& tp = *it;
+                    if (tp.y > row) {
+                        // Il pezzo è sopra la riga tagliata, deve scendere di 1
+                        tp.y--;
+                        changed = true;
+                    }
+                }
+
+                // d) Dopo aver fatto scendere i pezzi, potrebbero esserci nuove righe complete
+                // Riprendi il controllo delle righe dall'inizio
+                break;  // Esci dal for e ricomincia il do-while
             }
         }
 
-        bool gravity_changed;
-        do {
-            gravity_changed = false;
-            for (iterator it = begin(); it != end(); ++it) {
-                tetris_piece& tp = *it;
-                if (tp.y > 0 && containment(tp.p, tp.x, tp.y - 1)) {
-                    tp.y--;
-                    gravity_changed = true;
-                    changed = true;
-                }
-            }
-        } while (gravity_changed);
-
+        // e) Rimuovi pezzi diventati vuoti dopo il cutting
         node** current = &m_field;
         while (*current) {
             if ((*current)->tp.p.empty()) {
@@ -664,6 +671,7 @@ void tetris::insert(const piece& p, int x) {
                 current = &((*current)->next);
             }
         }
+
     } while (changed);
 }
 
@@ -673,40 +681,69 @@ bool tetris::containment(const piece& p, int x, int y) const {
     }
 
 
-    for (uint32_t i = 0; i < p.side(); i++) {
-        for (uint32_t j = 0; j < p.side(); j++) {
+    if (p.empty()) {
+        return true;
+    }
+
+    for (uint32_t i = 0; i < p.side(); ++i) {
+        for (uint32_t j = 0; j < p.side(); ++j) {
             if (p(i, j)) {
                 int field_x = x + static_cast<int>(j);
                 int field_y = y + static_cast<int>(i);
 
-                if (field_x < 0 || field_x >= static_cast<int>(m_width) ||
-                    field_y < 0 || field_y >= static_cast<int>(m_height)) {
+                // y DEVE essere ≥ 0 (dalla consegna)
+                if (field_y < 0 || field_y >= static_cast<int>(m_height)) {
                     return false;
-                    }
+                }
+
+                // x può essere negativo, ma deve essere < m_width
+                if (field_x < 0) {
+                    return false;  // Fuori a sinistra
+                }
+                if (field_x >= static_cast<int>(m_width)) {
+                    return false;  // Fuori a destra
+                }
             }
         }
     }
 
+    // Controlla collisioni con pezzi esistenti
     for (const_iterator it = begin(); it != end(); ++it) {
         const tetris_piece& existing = *it;
 
-        for (uint32_t i = 0; i < p.side(); i++) {
-            for (uint32_t j = 0; j < p.side(); j++) {
-                if (!p(i, j)) continue;
+        if (existing.p.empty()) {
+            continue;
+        }
 
-                int new_x = x + static_cast<int>(j);
-                int new_y = y + static_cast<int>(i);
+        // Calcola area di sovrapposizione (senza std::max/min)
+        int new_x1 = x;
+        int new_x2 = x + static_cast<int>(p.side());
+        int new_y1 = y;
+        int new_y2 = y + static_cast<int>(p.side());
 
-                for (uint32_t ei = 0; ei < existing.p.side(); ei++) {
-                    for (uint32_t ej = 0; ej < existing.p.side(); ej++) {
-                        if (!existing.p(ei, ej)) continue;
+        int exist_x1 = existing.x;
+        int exist_x2 = existing.x + static_cast<int>(existing.p.side());
+        int exist_y1 = existing.y;
+        int exist_y2 = existing.y + static_cast<int>(existing.p.side());
 
-                        int existing_x = existing.x + static_cast<int>(ej);
-                        int existing_y = existing.y + static_cast<int>(ei);
+        // Calcola manualmente max e min
+        int overlap_x1 = (new_x1 > exist_x1) ? new_x1 : exist_x1;
+        int overlap_x2 = (new_x2 < exist_x2) ? new_x2 : exist_x2;
+        int overlap_y1 = (new_y1 > exist_y1) ? new_y1 : exist_y1;
+        int overlap_y2 = (new_y2 < exist_y2) ? new_y2 : exist_y2;
 
-                        if (new_x == existing_x && new_y == existing_y) {
-                            return false;
-                        }
+        if (overlap_x1 < overlap_x2 && overlap_y1 < overlap_y2) {
+            // C'è sovrapposizione, controlla cella per cella
+            for (int oy = overlap_y1; oy < overlap_y2; ++oy) {
+                for (int ox = overlap_x1; ox < overlap_x2; ++ox) {
+                    // Converti a coordinate relative
+                    int rel_x_new = ox - x;
+                    int rel_y_new = oy - y;
+                    int rel_x_exist = ox - existing.x;
+                    int rel_y_exist = oy - existing.y;
+
+                    if (p(rel_y_new, rel_x_new) && existing.p(rel_y_exist, rel_x_exist)) {
+                        return false;  // Collisione!
                     }
                 }
             }
@@ -872,77 +909,104 @@ std::istream& operator>>(std::istream& is, tetris& t) {
         throw tetris_exception("Dimensioni campo non valide");
     }
 
-    // Crea tetris temporaneo
     tetris temp(width, height, score);
-    is >> std::ws;
 
-    struct PieceInfo {
+    // Struttura per nodo della lista
+    struct PieceNode {
         piece p;
         int x;
         int y;
-        PieceInfo* next;
+        PieceNode* next;
+
+        PieceNode(piece const& p_, int x_, int y_)
+            : p(p_), x(x_), y(y_), next(nullptr) {}
+
+        ~PieceNode() {
+            // Il pezzo p si distrugge automaticamente
+        }
     };
 
-    PieceInfo* stack = nullptr;
-    bool error_occurred = false;
-    tetris_exception last_exception("");
+    // Lista in ordine di lettura
+    PieceNode* read_order_head = nullptr;
+    PieceNode* read_order_tail = nullptr;
 
-    while (is.peek() != EOF && !error_occurred) {
-        std::streampos current_pos = is.tellg();
+    // Lista in ordine inverso (per l'aggiunta)
+    PieceNode* reverse_order_head = nullptr;
 
-        try {
-            piece p;
-            int x, y;
+    try {
+        is >> std::ws;
 
-            if (!(is >> p)) {
-                break;
-            }
-
+        // FASE 1: Leggi tutti i pezzi
+        while (true) {
             is >> std::ws;
+            if (is.peek() == EOF) break;
+
+            piece p;
+            if (!(is >> p)) break;
+
+            int x, y;
             if (!(is >> x >> y)) {
-                throw tetris_exception("Errore lettura coordinate");
+                throw tetris_exception("Coordinate mancanti");
             }
 
-            // Push sullo stack (ordine inverso)
-            PieceInfo* new_node = new PieceInfo{p, x, y, stack};
-            stack = new_node;
+            // Crea nodo per la lista di lettura
+            PieceNode* new_node = new PieceNode(p, x, y);
+            if (!read_order_head) {
+                read_order_head = read_order_tail = new_node;
+            } else {
+                read_order_tail->next = new_node;
+                read_order_tail = new_node;
+            }
 
-        } catch (const tetris_exception& e) {
-            is.clear();
-            is.seekg(current_pos);
-            error_occurred = true;
-            last_exception = e;
+            // Crea nodo per la lista invertita (COPIA)
+            PieceNode* reverse_node = new PieceNode(p, x, y);
+            reverse_node->next = reverse_order_head;
+            reverse_order_head = reverse_node;
         }
 
-        is >> std::ws;
-    }
+        if (!read_order_head) {
+            t = std::move(temp);
+            return is;
+        }
 
-    // Ora prova ad aggiungere tutti i pezzi
-    PieceInfo* current = stack;
-    bool add_failed = false;
+        // FASE 2: Aggiungi i pezzi dalla lista invertita
+        PieceNode* current = reverse_order_head;
+        while (current) {
+            PieceNode* next_node = current->next;
 
-    while (current && !add_failed) {
-        try {
-            temp.add(current->p, current->x, current->y);
-            PieceInfo* next = current->next;
+            if (!current->p.empty()) {
+                temp.insert(current->p, current->x);
+            }
+
+            delete current;
+            current = next_node;
+        }
+
+        // FASE 3: Dealloca la lista di lettura
+        current = read_order_head;
+        while (current) {
+            PieceNode* next_node = current->next;
+            delete current;
+            current = next_node;
+        }
+
+    } catch (...) {
+        // CLEANUP COMPLETO in caso di eccezione
+        PieceNode* current = read_order_head;
+        while (current) {
+            PieceNode* next = current->next;
             delete current;
             current = next;
-        } catch (const tetris_exception& e) {
-            add_failed = true;
-            last_exception = e;
         }
-    }
 
-    // Pulisci eventuali pezzi rimanenti nella pila
-    while (current) {
-        PieceInfo* next = current->next;
-        delete current;
-        current = next;
-    }
+        current = reverse_order_head;
+        while (current) {
+            PieceNode* next = current->next;
+            delete current;
+            current = next;
+        }
 
-    // Se c'è stato un errore, rilancia
-    if (add_failed || error_occurred) {
-        throw last_exception;
+        throw;
     }
 
     t = std::move(temp);
@@ -2899,46 +2963,217 @@ void test_cut_row_spec_example() {
     std::cout << "\ncell (0,2) -> (1,2): " << (correct ? "✅ CORRETTO" : "❌ SBAGLIATO") << std::endl;
 }
 
+void test_tetris_game_session() {
+    std::cout << "\n=== INIZIO SESSIONE DI GIOCO TETRIS ===\n";
+
+    // 1. Crea campo di gioco 10x20
+    tetris game(10, 20);
+    std::cout << "Creato campo 10x20\n";
+    std::cout << "Score iniziale: " << game.score() << "\n";
+
+    // 2. Crea alcuni pezzi Tetris classici
+    // Pezzo I (4x1)
+    piece i_piece(4, 201);  // Cyan
+    for (uint32_t j = 0; j < 4; ++j) {
+        i_piece(1, j) = true;  // Riga centrale piena
+    }
+
+    // Pezzo O (2x2)
+    piece o_piece(2, 226);  // Giallo
+    for (uint32_t i = 0; i < 2; ++i) {
+        for (uint32_t j = 0; j < 2; ++j) {
+            o_piece(i, j) = true;
+        }
+    }
+
+    // Pezzo T (3x3)
+    piece t_piece(4, 129);  // Viola
+    t_piece(0, 1) = true;
+    t_piece(1, 0) = true;
+    t_piece(1, 1) = true;
+    t_piece(1, 2) = true;
+
+    // 3. Inserisci pezzi
+    std::cout << "\n--- Inserimento pezzo I al centro ---\n";
+    try {
+        game.insert(i_piece, 3);  // x=3 (centro)
+        std::cout << "Inserito pezzo I a x=3\n";
+        std::cout << "Score: " << game.score() << "\n";
+    } catch (const tetris_exception& e) {
+        std::cout << "ERRORE: " << e.what() << "\n";
+    }
+    piece full_row_piece(16, 46);
+    for (uint32_t j = 0; j < 10; ++j) {
+        full_row_piece(0, j) = true;  // Riga 0 completamente piena
+    }
+
+    try {
+        game.insert(full_row_piece, 0);
+        std::cout << "Inserita riga COMPLETAMENTE piena in fondo!\n";
+        std::cout << "Score: " << game.score() << " (dovrebbe essere 10)\n";
+    } catch (...) {
+        std::cout << "Non inserito\n";
+    }
+    std::cout << "\n--- Inserimento pezzo O a sinistra ---\n";
+    try {
+        game.insert(o_piece, 0);  // x=0 (sinistra)
+        std::cout << "Inserito pezzo O a x=0\n";
+        std::cout << "Score: " << game.score() << "\n";
+    } catch (const tetris_exception& e) {
+        std::cout << "ERRORE: " << e.what() << "\n";
+    }
+
+    std::cout << "\n--- Inserimento pezzo T a destra ---\n";
+    try {
+        game.insert(t_piece, 6);  // x=6 (destra)
+        std::cout << "Inserito pezzo T a x=6\n";
+        std::cout << "Score: " << game.score() << "\n";
+    } catch (const tetris_exception& e) {
+        std::cout << "ERRORE: " << e.what() << "\n";
+    }
+
+    // 4. Prova a creare una riga completa
+    std::cout << "\n--- Tentativo di creare riga completa ---\n";
+
+    // Crea un pezzo lungo 10 (l'intera larghezza)
+    piece line_piece(2, 46);  // 16x16 - abbastanza grande
+
+    // Oppure, se vuoi mantenere potenza di 2 ma più piccolo, usa 8:
+    // piece line_piece(8, 46);  // 8x8 - ma allora solo 8 colonne!
+
+    // Riempi le prime 10 colonne della riga 1
+    for (uint32_t j = 0; j < line_piece.side(); ++j) {
+        line_piece(1, j) = true;
+    }
+
+    try {
+        // Inserisci in fondo (y dovrebbe essere 0)
+        game.insert(line_piece, 0);
+        std::cout << "Inserita linea completa in fondo!\n";
+        std::cout << "Score dopo riga completa: " << game.score() << "\n";
+        std::cout << "Dovrebbe essere aumentato di " << game.width() << " = "
+                  << (game.score() - 0) << "\n";
+    } catch (const tetris_exception& e) {
+        std::cout << "ERRORE: " << e.what() << "\n";
+    }
+
+    // 5. Test I/O: salva e ricarica
+    std::cout << "\n--- Test salvataggio/ricarica ---\n";
+    std::stringstream ss;
+    ss << game;
+    std::cout << "Game salvato in stringa di " << ss.str().size() << " bytes\n";
+
+    tetris loaded_game;
+    try {
+        ss >> loaded_game;
+        std::cout << "Game ricaricato con successo!\n";
+        std::cout << "Score originale: " << game.score()
+                  << ", Score ricaricato: " << loaded_game.score() << "\n";
+
+        // Verifica uguaglianza
+        if (game == loaded_game) {
+            std::cout << "✓ I due giochi sono identici!\n";
+        } else {
+            std::cout << "✗ I due giochi sono DIVERSI!\n";
+        }
+    } catch (const tetris_exception& e) {
+        std::cout << "ERRORE nel caricamento: " << e.what() << "\n";
+    }
+
+    // 6. Test iteratori
+    std::cout << "\n--- Test iteratori ---\n";
+    int piece_count = 0;
+    for (auto it = game.begin(); it != game.end(); ++it) {
+        std::cout << "Pezzo " << piece_count++ << ": "
+                  << "size=" << it->p.side()
+                  << ", pos=(" << it->x << "," << it->y << ")\n";
+    }
+    std::cout << "Totale pezzi sul campo: " << piece_count << "\n";
+
+    // 7. Test move operations
+    std::cout << "\n--- Test move operations ---\n";
+    tetris game2 = std::move(game);
+    std::cout << "Dopo move constructor:\n";
+    std::cout << "  game2 score: " << game2.score() << "\n";
+    std::cout << "  game2 pieces: ";
+    int count2 = 0;
+    for (auto it = game2.begin(); it != game2.end(); ++it) count2++;
+    std::cout << count2 << "\n";
+
+    // 8. Test edge cases
+    std::cout << "\n--- Test edge cases ---\n";
+
+    // Prova a inserire fuori dai bounds
+    std::cout << "Test inserimento fuori bounds (x negativo): ";
+    try {
+        piece small(2, 100);
+        small(0,0) = small(0,1) = small(1,0) = small(1,1) = true;
+        game2.insert(small, -5);
+        std::cout << "INSERITO (strano!)\n";
+    } catch (const tetris_exception& e) {
+        std::cout << "BLOCCATO: " << e.what() << "\n";
+    }
+
+    // Prova pezzo vuoto
+    std::cout << "Test inserimento pezzo vuoto: ";
+    piece empty_piece(2, 50);  // Tutto false
+    try {
+        game2.insert(empty_piece, 5);
+        std::cout << "INSERITO\n";
+    } catch (const tetris_exception& e) {
+        std::cout << "ERRORE: " << e.what() << "\n";
+    }
+
+    std::cout << "\n=== FINE SESSIONE DI GIOCO ===\n";
+    std::cout << "Score finale: " << game2.score() << "\n";
+
+    // 9. Valgrind check
+    std::cout << "\n[NOTA] Esegui con: valgrind --leak-check=full ./programma\n";
+    std::cout << "       per verificare memory leaks\n";
+}
+
 int main() {
     try {
         std::cout << "🎮 TEST COMPLETO TETRIS - VERSIONE FINALE 🎮" << std::endl;
         std::cout << "============================================" << std::endl;
-
+        test_tetris_game_session();
+        /*
         // TEST PIECE (già verificati)
-        //test_power_of_two_validation();
-        //test_memory_safety_with_exceptions();
-        //debug_insert_game_over();
-        //test_with_spec_example();
-        //test_insert_no_negative_y();
-        //test_height_20_vs_6();
-        //test_cut_row_edge_case();
-        //test_io_edge_cases();
-        //test_whitespace_parsing();
-        //debug_add_failure();
-        //debug_parser_expansion();
+        debug_insert_game_over();
+        test_with_spec_example();
+        test_insert_no_negative_y();
+        test_height_20_vs_6();
+        test_cut_row_edge_case();
+        test_io_edge_cases();
+        test_whitespace_parsing();
+        debug_add_failure();
+        debug_parser_expansion();
+        // Test manuale
+        // Verifica l'ordine: dovrebbe essere C -> B -> A
+        // perché add() inserisce in testa, ma abbiamo invertito l'ordine di lettura
         debug_cut_row_invalid_piece();
         test_cut_row_spec_example();
-        //test_height_1();
-        //final_integration_test();
-        //test_abbreviated_formats();
-        //test_explicit_formats();
-        /*
+        test_height_1();
+        final_integration_test();
+        test_abbreviated_formats();
+        test_explicit_formats();
+
         test_cut_row_thorough();
         test_official_cases();
         test_critical_cases();
-        */
-        /*debug_insert_negative_x();
+
+        debug_insert_negative_x();
         test_example_from_spec();
         test_partial_piece_negative_x();
         test_negative_coordinates();
         debug_insert_complex_pieces();
         debug_insert_with_rotation();
-        debug_tetris_read_specific();*/
-        /*debug_containment_edge_cases();
+
+        debug_tetris_read_specific();
+        debug_containment_edge_cases();
         debug_insert_complex_cases();
         final_comprehensive_test();
-        */
-        /*
+
         test_cut_row_specific();
         test_parser_errors();
         test_cut_row_manual();
@@ -2966,7 +3201,7 @@ int main() {
         std::cout << "\n🎉 🎉 🎉 TUTTI I TEST SUPERATI! PROGETTO PRONTO! 🎉 🎉 🎉" << std::endl;
         std::cout << "Tutte le funzionalità di Piece e Tetris funzionano correttamente." << std::endl;
         std::cout << "Zero memory leak rilevati da Valgrind." << std::endl;
-        */
+    */
     } catch (const std::exception& e) {
         std::cerr << "❌ ERRORE: " << e.what() << std::endl;
         return 1;
