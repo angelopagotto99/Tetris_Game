@@ -1,6 +1,6 @@
 #include <sstream>
 #include "tetris.hpp"
-
+#include <vector>
 /*
  * CLASSE PIECE
  */
@@ -397,13 +397,6 @@ std::istream& operator>>(std::istream& is, piece& p) {
         C(is, temp_p, 0, 0, temp_p.side());
 
         is >> std::ws;
-        if (is.peek() != EOF) {
-            char extra_char = is.peek();
-            if (extra_char != ' ' && extra_char != '\t' && extra_char != '\n' && extra_char != '\r') {
-                throw tetris_exception("Caratteri extra dopo la struttura completa del pezzo");
-            }
-        }
-
         if (is.fail()) {
             throw tetris_exception("Errore durante il parsing della struttura");
         }
@@ -571,8 +564,10 @@ void tetris::add(const piece& p, int x, int y) {
 void tetris::insert(const piece& p, int x) {
     int found_y = -1;
 
-    // Cerca la y PIÙ ALTA possibile (dall'alto verso il basso)
-    for (int y = static_cast<int>(m_height) - 1; y >= -static_cast<int>(p.side()) + 1; y--) {
+    int start_y = static_cast<int>(m_height) - 1;
+    int end_y = 0;
+
+    for (int y = start_y; y >= end_y; y--) {
         if (containment(p, x, y)) {
             found_y = y;
         }
@@ -612,7 +607,6 @@ void tetris::insert(const piece& p, int x) {
             }
 
             if (row_complete) {
-                // Taglia la riga da tutti i pezzi che la intersecano
                 for (iterator it = begin(); it != end(); ++it) {
                     tetris_piece& tp = *it;
                     if (tp.y <= row && tp.y + static_cast<int>(tp.p.side()) > row) {
@@ -623,7 +617,7 @@ void tetris::insert(const piece& p, int x) {
 
                 m_score += m_width;
                 changed = true;
-                break;  // Ricomincia il controllo delle righe
+                break;
             }
         }
 
@@ -632,7 +626,7 @@ void tetris::insert(const piece& p, int x) {
             gravity_changed = false;
             for (iterator it = begin(); it != end(); ++it) {
                 tetris_piece& tp = *it;
-                if (tp.y > -static_cast<int>(tp.p.side()) + 1 && containment(tp.p, tp.x, tp.y - 1)) {
+                if (tp.y > 0 && containment(tp.p, tp.x, tp.y - 1)) {
                     tp.y--;
                     gravity_changed = true;
                     changed = true;
@@ -640,7 +634,6 @@ void tetris::insert(const piece& p, int x) {
             }
         } while (gravity_changed);
 
-        // Rimuovi pezzi vuoti
         node** current = &m_field;
         while (*current) {
             if ((*current)->tp.p.empty()) {
@@ -660,7 +653,7 @@ bool tetris::containment(const piece& p, int x, int y) const {
         throw tetris_exception("Piece deve avere side > 0");
     }
 
-    // Controllo bordi
+
     for (uint32_t i = 0; i < p.side(); i++) {
         for (uint32_t j = 0; j < p.side(); j++) {
             if (p(i, j)) {
@@ -675,7 +668,6 @@ bool tetris::containment(const piece& p, int x, int y) const {
         }
     }
 
-    // Controllo collisioni
     for (const_iterator it = begin(); it != end(); ++it) {
         const tetris_piece& existing = *it;
 
@@ -865,7 +857,6 @@ std::istream& operator>>(std::istream& is, tetris& t) {
     tetris temp(width, height, score);
     is >> std::ws;
 
-    // Usiamo una pila (stack) di pezzi usando solo l'interfaccia pubblica
     struct PieceInfo {
         piece p;
         int x;
@@ -874,8 +865,10 @@ std::istream& operator>>(std::istream& is, tetris& t) {
     };
 
     PieceInfo* stack = nullptr;
+    bool error_occurred = false;
+    tetris_exception last_exception("");
 
-    while (is.peek() != EOF) {
+    while (is.peek() != EOF && !error_occurred) {
         std::streampos current_pos = is.tellg();
 
         try {
@@ -887,14 +880,8 @@ std::istream& operator>>(std::istream& is, tetris& t) {
             }
 
             is >> std::ws;
-
-            if (!(is >> x)) {
-                throw tetris_exception("Errore lettura coordinata x");
-            }
-
-            is >> std::ws;
-            if (!(is >> y)) {
-                throw tetris_exception("Errore lettura coordinata y");
+            if (!(is >> x >> y)) {
+                throw tetris_exception("Errore lettura coordinate");
             }
 
             // Push sullo stack (ordine inverso)
@@ -902,25 +889,41 @@ std::istream& operator>>(std::istream& is, tetris& t) {
             stack = new_node;
 
         } catch (const tetris_exception& e) {
-            // Se c'è un errore, pulisci lo stack e rilancia
-            while (stack) {
-                PieceInfo* next = stack->next;
-                delete stack;
-                stack = next;
-            }
-            throw; // Rilancia l'eccezione originale
+            is.clear();
+            is.seekg(current_pos);
+            error_occurred = true;
+            last_exception = e;
         }
 
         is >> std::ws;
     }
 
-    // Ora pop dallo stack e aggiungi in testa (ordine corretto)
+    // Ora prova ad aggiungere tutti i pezzi
     PieceInfo* current = stack;
+    bool add_failed = false;
+
+    while (current && !add_failed) {
+        try {
+            temp.add(current->p, current->x, current->y);
+            PieceInfo* next = current->next;
+            delete current;
+            current = next;
+        } catch (const tetris_exception& e) {
+            add_failed = true;
+            last_exception = e;
+        }
+    }
+
+    // Pulisci eventuali pezzi rimanenti nella pila
     while (current) {
-        temp.add(current->p, current->x, current->y);
         PieceInfo* next = current->next;
         delete current;
         current = next;
+    }
+
+    // Se c'è stato un errore, rilancia
+    if (add_failed || error_occurred) {
+        throw last_exception;
     }
 
     t = std::move(temp);
@@ -1011,6 +1014,7 @@ void test_piece_rotate() {
 
     std::cout << "Rotazione: OK" << std::endl;
 }
+
 void debug_insert_game_over() {
     std::cout << "=== DEBUG insert GAME OVER ===" << std::endl;
 
@@ -1425,6 +1429,30 @@ void test_tetris_copy_move() {
     std::cout << "Copy/move tetris: OK" << std::endl;
 }
 
+void test_negative_coordinates() {
+    std::cout << "=== TEST COORDINATE NEGATIVE ===" << std::endl;
+
+    tetris game(8, 6);
+    piece p(2, 100);
+    p(0,0) = true; p(0,1) = true;
+    p(1,0) = true; p(1,1) = true;
+
+    // Test coordinate negative
+    std::cout << "Test x negativo:" << std::endl;
+    for (int x = -3; x < 8; x++) {
+        bool ok = game.containment(p, x, 0);
+        std::cout << "  containment(" << x << ",0): " << (ok ? "OK" : "NO") << std::endl;
+    }
+
+    // Prova add con x negativo
+    try {
+        game.add(p, -2, 0);
+        std::cout << "✓ Add con x=-2 riuscito" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Add con x=-2 fallito: " << e.what() << std::endl;
+    }
+}
+
 void test_tetris_iterators() {
     std::cout << "\n=== TEST ITERATORI TETRIS ===" << std::endl;
 
@@ -1836,6 +1864,462 @@ void debug_color_zero() {
         std::cout << "✓ OK: tetris blocca piece colore 0: " << e.what() << std::endl;
     }
 }
+void debug_insert_complex_pieces() {
+    std::cout << "=== DEBUG INSERT PEZZI COMPLESSI ===" << std::endl;
+
+    // Test 1: Pezzo 4x4 con pattern sparso
+    tetris game1(8, 6);
+    piece p1(4, 100);
+    // Pattern sparso (non tutto pieno)
+    p1(0,0)=true; p1(0,2)=true;
+    p1(1,1)=true; p1(1,3)=true;
+    p1(2,0)=true; p1(2,2)=true;
+    p1(3,1)=true; p1(3,3)=true;
+
+    try {
+        game1.insert(p1, 2);
+        std::cout << "✓ Pezzo 4x4 sparso inserito" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ GAME OVER con pezzo sparso: " << e.what() << std::endl;
+    }
+
+    // Test 2: Pezzo che tocca i bordi
+    tetris game2(6, 8);
+    piece p2(2, 200);
+    p2(0,0)=true; p2(0,1)=true;
+    p2(1,0)=true; p2(1,1)=true;
+
+    // Prova posizioni estreme
+    std::cout << "\nTest posizioni estreme:" << std::endl;
+    for (int x = -1; x <= 5; x++) {
+        try {
+            game2.insert(p2, x);
+            std::cout << "  x=" << x << ": ✓ OK" << std::endl;
+            // Rimuovi per testare il prossimo
+            game2 = tetris(6, 8);
+        } catch (const tetris_exception& e) {
+            std::cout << "  x=" << x << ": ✗ " << e.what() << std::endl;
+        }
+    }
+}
+void debug_insert_with_rotation() {
+    std::cout << "\n=== DEBUG INSERT CON ROTAZIONE ===" << std::endl;
+
+    tetris game(8, 6);
+    piece p(4, 150);
+    // Pattern asimmetrico per testare rotazione
+    p(0,0)=true; p(0,1)=true;
+    p(1,0)=true;
+    p(2,2)=true;
+    p(3,3)=true;
+
+    std::cout << "Pezzo originale:" << std::endl;
+    p.print_ascii_art(std::cout);
+
+    // Rotazione prima di insert (come nei test play_games)
+    p.rotate();
+
+    std::cout << "Dopo rotazione:" << std::endl;
+    p.print_ascii_art(std::cout);
+
+    try {
+        game.insert(p, 2);
+        std::cout << "✓ Insert dopo rotazione riuscito" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ GAME OVER dopo rotazione: " << e.what() << std::endl;
+    }
+}
+
+void debug_tetris_read_specific() {
+    std::cout << "\n=== DEBUG TETRIS READ SPECIFICO ===" << std::endl;
+
+    // Input simile a quelli nei test
+    std::stringstream ss1("0 8 6\n2 202 () 1 4");
+    tetris t1;
+
+    try {
+        ss1 >> t1;
+        std::cout << "✓ Lettura base OK" << std::endl;
+        std::cout << "  Score: " << t1.score() << ", Size: " << t1.width() << "x" << t1.height() << std::endl;
+
+        int count = 0;
+        for (auto it = t1.begin(); it != t1.end(); ++it) {
+            std::cout << "  Pezzo " << count << " at (" << it->x << "," << it->y << ")" << std::endl;
+            count++;
+        }
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Lettura fallita: " << e.what() << std::endl;
+    }
+
+    // Input più complesso (come nella specifica)
+    std::stringstream ss2("0 8 6\n2 202 () 1 4\n8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7");
+    tetris t2;
+
+    try {
+        ss2 >> t2;
+        std::cout << "\n✓ Lettura multipla OK" << std::endl;
+        std::cout << "  Pezzi caricati: ";
+        int count = 0;
+        for (auto it = t2.begin(); it != t2.end(); ++it) {
+            count++;
+        }
+        std::cout << count << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "\n✗ Lettura multipla fallita: " << e.what() << std::endl;
+    }
+}
+void test_example_from_spec() {
+    std::cout << "=== TEST ESEMPIO SPECIFICA ===" << std::endl;
+
+    // Ricrea l'esempio della specifica
+    tetris game(8, 20); // Forse height maggiore di 6
+
+    piece p(8, 28);
+    // Qui dovresti creare il pezzo esatto dalla stringa...
+    // Per ora testiamo con pezzo semplice
+
+    piece simple_p(2, 202);
+    simple_p(0,0)=true; simple_p(1,1)=true;
+
+    std::cout << "Test add con coordinate negative:" << std::endl;
+    try {
+        game.add(simple_p, -1, 0);
+        std::cout << "✓ Add con x=-1 riuscito" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Add fallito: " << e.what() << std::endl;
+    }
+}
+
+void test_partial_piece_negative_x() {
+    std::cout << "=== TEST PEZZO PARZIALE CON x NEGATIVO ===" << std::endl;
+
+    tetris game(8, 6);
+
+    // Pezzo 4x4 con solo le ultime 2 colonne piene
+    piece p(4, 100);
+    // Colonne 0,1 vuote; colonne 2,3 piene
+    for (uint32_t i = 0; i < 4; i++) {
+        for (uint32_t j = 0; j < 4; j++) {
+            p(i,j) = (j >= 2); // Solo colonne 2,3 piene
+        }
+    }
+
+    std::cout << "Pattern pezzo (X=pieno, -=vuoto):" << std::endl;
+    p.print_ascii_art(std::cout);
+
+    std::cout << "\nTest containment con x negativo:" << std::endl;
+    // x=-2: le colonne piene (j=2,3) vanno a x=0,1 (dentro campo)
+    std::cout << "containment(-2,0): " << game.containment(p, -2, 0)
+              << " (dovrebbe essere TRUE)" << std::endl;
+
+    // x=-3: le colonne piene vanno a x=-1,0 (parzialmente fuori)
+    std::cout << "containment(-3,0): " << game.containment(p, -3, 0)
+              << " (dovrebbe essere FALSE)" << std::endl;
+}
+
+void debug_insert_negative_x() {
+    std::cout << "=== DEBUG INSERT CON x NEGATIVO ===" << std::endl;
+
+    tetris game(8, 6);
+
+    // Pezzo 4x4 con solo destra piena (come nell'esempio)
+    piece p(4, 150);
+    for (uint32_t i = 0; i < 4; i++) {
+        for (uint32_t j = 0; j < 4; j++) {
+            p(i,j) = (j >= 2); // Solo colonne 2,3 piene
+        }
+    }
+
+    std::cout << "Pezzo pattern:" << std::endl;
+    p.print_ascii_art(std::cout);
+
+    std::cout << "\nTest insert con vari x:" << std::endl;
+    for (int x = -3; x <= 5; x++) {
+        tetris game_copy(8, 6); // Nuovo gioco ogni volta
+
+        try {
+            game_copy.insert(p, x);
+            std::cout << "  x=" << x << ": ✓ OK (y=";
+            // Trova y usata
+            for (auto it = game_copy.begin(); it != game_copy.end(); ++it) {
+                std::cout << it->y;
+            }
+            std::cout << ")" << std::endl;
+        } catch (const tetris_exception& e) {
+            std::cout << "  x=" << x << ": ✗ " << e.what() << std::endl;
+        }
+    }
+}
+
+void test_critical_cases() {
+    std::cout << "=== TEST CASI CRITICI ===" << std::endl;
+
+    // Test 1: Pezzo completamente pieno con x negativo
+    std::cout << "1. Pezzo 2x2 pieno con x negativo:" << std::endl;
+    tetris game1(8, 6);
+    piece p1(2, 100);
+    // Riempi tutto
+    for (uint32_t i = 0; i < 2; i++) {
+        for (uint32_t j = 0; j < 2; j++) {
+            p1(i,j) = true;
+        }
+    }
+
+    std::cout << "  containment(-1,0): " << game1.containment(p1, -1, 0)
+         << " (dovrebbe essere FALSE)" << std::endl;
+
+    // Test 2: Lettura esatta dall'esempio specifica
+    std::cout << "\n2. Lettura esempio specifica:" << std::endl;
+    std::stringstream ss("0 8 20\n2 202 () 1 4\n8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7");
+    // NOTA: height=20 invece di 6!
+
+    tetris t;
+    try {
+        ss >> t;
+        std::cout << "✓ Lettura OK con height=20" << std::endl;
+        std::cout << "  Pezzi: ";
+        int count = 0;
+        for (auto it = t.begin(); it != t.end(); ++it) {
+            std::cout << "(" << it->x << "," << it->y << ") ";
+            count++;
+        }
+        std::cout << "[" << count << " pezzi]" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Lettura fallita: " << e.what() << std::endl;
+    }
+
+    // Test 3: insert con ricerca y che includa negative
+    std::cout << "\n3. insert cerca y negative:" << std::endl;
+    tetris game3(8, 6);
+    piece p3(4, 150);
+    p3(0,0)=true; // Solo una cella piena
+
+    try {
+        game3.insert(p3, 0);
+        std::cout << "✓ Insert riuscito" << std::endl;
+        // Verifica se ha usato y negativo
+        for (auto it = game3.begin(); it != game3.end(); ++it) {
+            std::cout << "  y usata: " << it->y << std::endl;
+            if (it->y < 0) {
+                std::cout << "  ⚠️  Usata y negativa!" << std::endl;
+            }
+        }
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Insert fallito: " << e.what() << std::endl;
+    }
+}
+
+void test_official_cases() {
+    std::cout << "=== TEST CASI UFFICIALI ===" << std::endl;
+
+    // Prova con varie dimensioni che potrebbero essere usate nei test
+    std::vector<std::pair<int, int>> dimensions = {
+        {8, 6},   // Forse usato
+        {8, 20},  // Come funziona
+        {10, 20}, // Standard
+        {8, 10}   // Compromesso
+    };
+
+    std::string input = "0 8 6\n2 202 () 1 4\n8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7";
+
+    for (auto& dim : dimensions) {
+        std::cout << "\nTest con width=" << dim.first << ", height=" << dim.second << ":" << std::endl;
+
+        // Modifica le dimensioni nell'input
+        std::stringstream ss;
+        ss << "0 " << dim.first << " " << dim.second << "\n";
+        ss << "2 202 () 1 4\n";
+        ss << "8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7";
+
+        tetris t;
+        try {
+            ss >> t;
+            std::cout << "  ✓ Lettura OK" << std::endl;
+            std::cout << "  Pezzi caricati: ";
+            int count = 0;
+            for (auto it = t.begin(); it != t.end(); ++it) {
+                count++;
+            }
+            std::cout << count << std::endl;
+        } catch (const tetris_exception& e) {
+            std::cout << "  ✗ Fallito: " << e.what() << std::endl;
+        }
+    }
+}
+
+void test_cut_row_thorough() {
+    std::cout << "=== TEST CUT_ROW DETTAGLIATO ===" << std::endl;
+
+    // Test caso specifico che potrebbe fallire
+    piece p(4, 100);
+
+    // Pattern che potrebbe causare problemi
+    // Riga 0: alcune celle piene
+    // Riga 1: tagliata via
+    // Riga 2,3: altre celle
+
+    p(0,0)=true; p(0,1)=false; p(0,2)=true; p(0,3)=false;
+    p(1,0)=false; p(1,1)=true; p(1,2)=false; p(1,3)=true;
+    p(2,0)=true; p(2,1)=false; p(2,2)=true; p(2,3)=false;
+    p(3,0)=false; p(3,1)=true; p(3,2)=false; p(3,3)=true;
+
+    std::cout << "Prima di cut_row(1):" << std::endl;
+    p.print_ascii_art(std::cout);
+
+    // Salva copia per confronto
+    piece original = p;
+
+    try {
+        p.cut_row(1);
+        std::cout << "\nDopo cut_row(1):" << std::endl;
+        p.print_ascii_art(std::cout);
+
+        // Verifiche post-cut_row
+        std::cout << "\nVerifiche:" << std::endl;
+        std::cout << "1. Pezzo vuoto? " << (p.empty() ? "SI" : "NO")
+                  << " (dovrebbe essere NO)" << std::endl;
+        std::cout << "2. Pezzo pieno? " << (p.full() ? "SI" : "NO")
+                  << " (dovrebbe essere NO)" << std::endl;
+        std::cout << "3. Side ancora valido? " << p.side()
+                  << " (dovrebbe essere 4)" << std::endl;
+
+        // Test operator== dopo cut_row
+        std::cout << "4. Pezzo uguale a se stesso? " << (p == p ? "SI" : "NO")
+                  << " (dovrebbe essere SI)" << std::endl;
+
+        // Test I/O dopo cut_row
+        std::stringstream ss;
+        ss << p;
+        std::cout << "5. Serializzazione: " << ss.str() << std::endl;
+
+        piece p2;
+        ss >> p2;
+        std::cout << "6. Deserializzazione OK? " << (p == p2 ? "SI" : "NO")
+                  << " (dovrebbe essere SI)" << std::endl;
+
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Exception: " << e.what() << std::endl;
+    }
+}
+
+void test_with_spec_example() {
+    std::cout << "=== TEST CON DATI SPECIFICA ===" << std::endl;
+
+    // Dati esatti dalla specifica
+    std::string input =
+        "0 8 6\n"
+        "2 202 () 1 4\n"
+        "8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7\n"
+        "4 27 (([][]()())([][]()())(()()[][])()) 4 5\n"
+        "4 160 (([][]()())([][]()())[][]) 2 7";
+
+    std::stringstream ss(input);
+    tetris t;
+
+    try {
+        ss >> t;
+        std::cout << "✓ Lettura OK" << std::endl;
+        std::cout << "Pezzi caricati: ";
+        int count = 0;
+        for (auto it = t.begin(); it != t.end(); ++it) {
+            count++;
+        }
+        std::cout << count << std::endl;
+
+        // Verifica output
+        std::stringstream ss2;
+        ss2 << t;
+        std::cout << "Output:\n" << ss2.str() << std::endl;
+
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Fallito: " << e.what() << std::endl;
+
+        // Debug: perché fallisce?
+        if (std::string(e.what()) == "Il pezzo non può essere inserito") {
+            std::cout << "Problema con containment per qualche pezzo" << std::endl;
+        }
+    }
+}
+
+void test_height_20_vs_6() {
+    std::cout << "=== TEST HEIGHT 20 vs 6 ===" << std::endl;
+
+    // Stessi dati, diverse height
+    std::string input_20 =
+        "0 8 20\n"
+        "2 202 () 1 4\n"
+        "8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7\n";
+
+    std::string input_6 =
+        "0 8 6\n"
+        "2 202 () 1 4\n"
+        "8 28 ([]([]([]()[]())[]([]()[]()))[]([]([]()[][])[][])) -4 7\n";
+
+    // Test height=20
+    {
+        std::stringstream ss(input_20);
+        tetris t;
+        try {
+            ss >> t;
+            std::cout << "✓ Height=20: OK" << std::endl;
+        } catch (const tetris_exception& e) {
+            std::cout << "✗ Height=20: " << e.what() << std::endl;
+        }
+    }
+
+    // Test height=6
+    {
+        std::stringstream ss(input_6);
+        tetris t;
+        try {
+            ss >> t;
+            std::cout << "✓ Height=6: OK" << std::endl;
+        } catch (const tetris_exception& e) {
+            std::cout << "✗ Height=6: " << e.what() << std::endl;
+        }
+    }
+
+    // Forse y=7 è valido se il pezzo ha celle solo nella parte bassa?
+    // Testiamo con un pezzo che ha celle solo nelle righe 0-1
+    std::cout << "\nTest pezzo con celle solo in basso:" << std::endl;
+    tetris game(8, 6);
+    piece p(8, 28);
+    // Solo prime 2 righe piene
+    for (uint32_t i = 0; i < 2; i++) {
+        for (uint32_t j = 0; j < 8; j++) {
+            p(i,j) = true;
+        }
+    }
+
+    // y=7: bottom-left a y=7, ma pezzo alto 8 -> celle a y=7..14
+    // Ma height=6 -> y=7..14 sono TUTTE fuori!
+    std::cout << "containment con pezzo 8x8 (solo righe 0-1 piene) a y=7: "
+              << game.containment(p, -4, 7) << std::endl;
+}
+
+void test_insert_no_negative_y() {
+    std::cout << "=== TEST INSERT NO NEGATIVE Y ===" << std::endl;
+
+    tetris game(8, 6);
+    piece p(4, 100);
+    p(0,0)=true; // Solo una cella piena
+
+    try {
+        game.insert(p, 2);
+        std::cout << "✓ Insert riuscito" << std::endl;
+
+        for (auto it = game.begin(); it != game.end(); ++it) {
+            std::cout << "Pezzo a y=" << it->y;
+            if (it->y < 0) {
+                std::cout << " ⚠️  NEGATIVO!" << std::endl;
+            } else {
+                std::cout << " ✅ OK (non negativo)" << std::endl;
+            }
+        }
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ GAME OVER: " << e.what() << std::endl;
+    }
+}
 
 int main() {
     try {
@@ -1845,14 +2329,26 @@ int main() {
         // TEST PIECE (già verificati)
         //test_power_of_two_validation();
         //test_memory_safety_with_exceptions();
-        /*test_parser_debug();
-        debug_insert_game_over();
-        debug_containment_edge_cases();
+        //debug_insert_game_over();
+        //test_with_spec_example();
+        test_insert_no_negative_y();
+        test_height_20_vs_6();
+        /*
+        test_cut_row_thorough();
+        test_official_cases();
+        test_critical_cases();
+        */
+        /*debug_insert_negative_x();
+        test_example_from_spec();
+        test_partial_piece_negative_x();
+        test_negative_coordinates();
+        debug_insert_complex_pieces();
+        debug_insert_with_rotation();
+        debug_tetris_read_specific();*/
+        /*debug_containment_edge_cases();
         debug_insert_complex_cases();
         final_comprehensive_test();
         */
-        debug_color_zero();
-
         /*
         test_cut_row_specific();
         test_parser_errors();
