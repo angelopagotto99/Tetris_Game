@@ -146,14 +146,14 @@ void piece::cut_row(uint32_t i) {
         throw tetris_exception("Indice fuori range in cut_row()");
     }
 
-    for(uint32_t r = i; r < m_side - 1; r++) {
+    for(uint32_t r = i; r >0; r--) {
         for(uint32_t c = 0; c < m_side; c++) {
-            m_grid[r][c] = m_grid[r + 1][c];
+            m_grid[r][c] = m_grid[r - 1][c];
         }
     }
 
     for(uint32_t j = 0; j < m_side; j++) {
-        m_grid[m_side - 1][j] = false;
+        m_grid[0][j] = false;
     }
 }
 
@@ -2682,7 +2682,222 @@ void test_whitespace_parsing() {
     }
 }
 
+void test_height_1() {
+    std::cout << "=== TEST m_height = 1 ===" << std::endl;
 
+    tetris game(4, 1); // Campo altissimo 1!
+
+    // Pezzo 1x1 - dovrebbe funzionare
+    piece p1(1, 100);
+    p1(0,0) = true;
+
+    try {
+        game.insert(p1, 1);
+        std::cout << "✓ Pezzo 1x1 in campo 1 alto: OK" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✗ Pezzo 1x1: " << e.what() << std::endl;
+    }
+
+    // Pezzo 2x2 - IMPOSSIBILE!
+    piece p2(2, 200);
+    p2(0,0) = true; p2(0,1) = true;
+    p2(1,0) = true; p2(1,1) = true;
+
+    try {
+        game.insert(p2, 0);
+        std::cout << "✗ Pezzo 2x2 NON bloccato!" << std::endl;
+    } catch (const tetris_exception& e) {
+        std::cout << "✓ Pezzo 2x2 bloccato (troppo alto): " << e.what() << std::endl;
+    }
+}
+
+void comprehensive_cut_row_test() {
+    std::cout << "=== TEST CUT_ROW COMPLETO ===" << std::endl;
+
+    // Test 1: Pezzo 4x4, cut riga 1
+    piece p1(4, 100);
+    // Pattern noto
+    p1(0,0)=1; p1(0,1)=1; p1(0,2)=0; p1(0,3)=0;
+    p1(1,0)=1; p1(1,1)=0; p1(1,2)=1; p1(1,3)=0;
+    p1(2,0)=0; p1(2,1)=1; p1(2,2)=0; p1(2,3)=1;
+    p1(3,0)=0; p1(3,1)=0; p1(3,2)=1; p1(3,3)=1;
+
+    std::cout << "Prima di cut_row(1):" << std::endl;
+    p1.print_ascii_art(std::cout);
+
+    piece backup1 = p1;
+    p1.cut_row(1);
+
+    std::cout << "Dopo cut_row(1):" << std::endl;
+    p1.print_ascii_art(std::cout);
+
+    // Verifica manuale
+    bool ok1 = true;
+    // Dopo cut_row(1), riga 1 diventa vecchia riga 2, etc.
+    for(uint32_t c = 0; c < 4; c++) {
+        if (p1(1,c) != backup1(2,c)) ok1 = false;
+        if (p1(2,c) != backup1(3,c)) ok1 = false;
+        if (p1(3,c) != false) ok1 = false; // Ultima riga vuota
+    }
+    std::cout << (ok1 ? "✓ cut_row(1) OK" : "✗ cut_row(1) ERRATO") << std::endl;
+
+    // Test 2: Pezzo 2x2, cut riga 0
+    piece p2(2, 200);
+    p2(0,0)=1; p2(0,1)=0;
+    p2(1,0)=0; p2(1,1)=1;
+
+    p2.cut_row(0);
+
+    bool ok2 = (p2(0,0)==false && p2(0,1)==true &&  // Vecchia riga 1
+                p2(1,0)==false && p2(1,1)==false); // Nuova riga vuota
+    std::cout << (ok2 ? "✓ cut_row(0) 2x2 OK" : "✗ cut_row(0) 2x2 ERRATO") << std::endl;
+
+    // Test 3: Eccezione per indice fuori range
+    piece p3(2, 300);
+    bool exception_thrown = false;
+    try {
+        p3.cut_row(2); // Fuori range
+    } catch (const tetris_exception& e) {
+        exception_thrown = true;
+    }
+    std::cout << (exception_thrown ? "✓ cut_row(2) bloccato" : "✗ cut_row(2) NON bloccato") << std::endl;
+
+    // Test 4: Pezzo diventa vuoto dopo cut_row
+    piece p4(2, 400);
+    p4(0,0)=1; p4(0,1)=1; // Solo prima riga piena
+    // Seconda riga già vuota
+
+    p4.cut_row(0);
+    std::cout << (p4.empty() ? "✓ Pezzo diventato vuoto dopo cut_row"
+                             : "✗ Pezzo NON vuoto dopo cut_row") << std::endl;
+}
+
+void debug_cut_row_invalid_piece() {
+    std::cout << "=== DEBUG CUT_ROW INVALID PIECE ===" << std::endl;
+
+    // Prova pattern che potrebbero causare problemi
+    piece p(4, 100);
+
+    // Pattern 1: Solo alcune celle piene sparse
+    p(0,0)=1; p(0,2)=1;
+    p(1,1)=1;
+    p(2,2)=1; p(2,3)=1;
+    p(3,0)=1; p(3,1)=1;
+
+    std::cout << "Prima di cut_row(2):" << std::endl;
+    p.print_ascii_art(std::cout);
+
+    // Salva stato
+    uint32_t old_side = p.side();
+    int old_color = p.color();
+    bool old_empty = p.empty();
+    bool old_full = p.full();
+
+    try {
+        p.cut_row(2);
+
+        std::cout << "Dopo cut_row(2):" << std::endl;
+        p.print_ascii_art(std::cout);
+
+        // Verifica consistenza
+        std::cout << "\nVerifica consistenza:" << std::endl;
+        std::cout << "side: " << p.side() << " (era " << old_side << ")"
+                  << (p.side() == old_side ? " ✅" : " ❌") << std::endl;
+        std::cout << "color: " << p.color() << " (era " << old_color << ")"
+                  << (p.color() == old_color ? " ✅" : " ❌") << std::endl;
+        std::cout << "empty: " << p.empty() << " (era " << old_empty << ")" << std::endl;
+        std::cout << "full: " << p.full() << " (era " << old_full << ")" << std::endl;
+
+        // Verifica accesso a tutte le celle
+        bool access_ok = true;
+        for (uint32_t i = 0; i < p.side(); i++) {
+            for (uint32_t j = 0; j < p.side(); j++) {
+                try {
+                    bool val = p(i,j); // Solo accesso
+                    (void)val; // Ignora
+                } catch (...) {
+                    access_ok = false;
+                    std::cout << "Accesso fallito a (" << i << "," << j << ")" << std::endl;
+                }
+            }
+        }
+        std::cout << "Accesso a tutte le celle: " << (access_ok ? "✅" : "❌") << std::endl;
+
+    } catch (const tetris_exception& e) {
+        std::cout << "Exception: " << e.what() << std::endl;
+    }
+}
+
+void test_cut_row_io_roundtrip() {
+    std::cout << "=== TEST CUT_ROW + I/O ===" << std::endl;
+
+    piece p(4, 150);
+    // Pattern complesso
+    p(0,0)=1; p(0,2)=1;
+    p(1,1)=1; p(1,3)=1;
+    p(2,0)=1; p(2,2)=1;
+    p(3,1)=1; p(3,3)=1;
+
+    std::cout << "Originale: " << p << std::endl;
+
+    // Applica cut_row
+    p.cut_row(1);
+
+    std::cout << "Dopo cut_row(1): " << p << std::endl;
+
+    // Prova I/O round-trip
+    std::stringstream ss;
+    ss << p;
+
+    piece p2;
+    try {
+        ss >> p2;
+        std::cout << "Dopo round-trip: " << p2 << std::endl;
+
+        if (p == p2) {
+            std::cout << "✅ Round-trip dopo cut_row: OK" << std::endl;
+        } else {
+            std::cout << "❌ Round-trip dopo cut_row: PEZZI DIVERSI!" << std::endl;
+            std::cout << "   Forse D() produce output sbagliato dopo cut_row?" << std::endl;
+        }
+    } catch (const tetris_exception& e) {
+        std::cout << "❌ Parsing dopo cut_row fallito: " << e.what() << std::endl;
+    }
+}
+
+void test_cut_row_spec_example() {
+    std::cout << "=== TEST CUT_ROW ESEMPIO SPECIFICA ===" << std::endl;
+
+    piece p(4, 100);
+    // Pattern dall'esempio grafico
+    p(0,0)=1; p(0,1)=0; p(0,2)=1; p(0,3)=0;  // X-X-
+    p(1,0)=0; p(1,1)=1; p(1,2)=0; p(1,3)=1;  // -X-X ← Tagliare questa
+    p(2,0)=1; p(2,1)=0; p(2,2)=1; p(2,3)=0;  // X-X-
+    p(3,0)=0; p(3,1)=1; p(3,2)=0; p(3,3)=1;  // -X-X
+
+    std::cout << "Prima di cut_row(1):" << std::endl;
+    for(uint32_t r = 0; r < 4; r++) {
+        for(uint32_t c = 0; c < 4; c++) {
+            std::cout << (p(r,c) ? 'X' : '-') << ' ';
+        }
+        std::cout << std::endl;
+    }
+
+    p.cut_row(1);
+
+    std::cout << "\nDopo cut_row(1):" << std::endl;
+    for(uint32_t r = 0; r < 4; r++) {
+        for(uint32_t c = 0; c < 4; c++) {
+            std::cout << (p(r,c) ? 'X' : '-') << ' ';
+        }
+        std::cout << std::endl;
+    }
+
+    // Secondo la specifica: cell (0,2) "shifts" down to (1,2)
+    // Quindi la X a (0,2) dovrebbe finire a (1,2)
+    bool correct = (p(1,2) == true);  // Vecchia (0,2) ora a (1,2)
+    std::cout << "\ncell (0,2) -> (1,2): " << (correct ? "✅ CORRETTO" : "❌ SBAGLIATO") << std::endl;
+}
 
 int main() {
     try {
@@ -2698,10 +2913,13 @@ int main() {
         //test_height_20_vs_6();
         //test_cut_row_edge_case();
         //test_io_edge_cases();
-        test_whitespace_parsing();
-        debug_add_failure();
-        debug_parser_expansion();
-        final_integration_test();
+        //test_whitespace_parsing();
+        //debug_add_failure();
+        //debug_parser_expansion();
+        debug_cut_row_invalid_piece();
+        test_cut_row_spec_example();
+        //test_height_1();
+        //final_integration_test();
         //test_abbreviated_formats();
         //test_explicit_formats();
         /*
